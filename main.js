@@ -1,5 +1,5 @@
 /*
-  PelosiBot 1.0 - serves a random raunchy image of Nancy Pelosi
+  PelosiBot 1.1 - serves a random raunchy image of Nancy Pelosi
   Now with some other pointless stuff!
 */
 
@@ -7,12 +7,17 @@ const Discord = require('discord.js');
 const fs = require('fs');
 let STATE = {};
 
+const PELOSIBOT_VERSION = '1.1';
+const PELOSI_ONLY_EXPR = /(^|\s)!pelosi($|\s)/;
 const TIME_WINDOW = 60000; // ms
 const RATE_LIMIT = 3;
-
-const DICE_EXPR = new RegExp(/^!roll (\d+)d(\d+)$/);
+const DICE_EXPR = /^!roll (\d+)d(\d+)$/;
 const DICE_SIDES = {'4': true, '6': true, '8': true, '10': true, '12': true, '20': true};
 const MAX_DICE = 20;
+const PELOSIBOT_EXPR = /^!pelosibot (.+)/;
+
+const SECRET = process.env.PELOSI_BOT_SECRET;
+const DATA_FILE_PATH = process.env.PELOSI_BOT_FILE_PATH;
 
 // ================================ //
 
@@ -71,12 +76,14 @@ const rollDice = (msg, userId, count, sides) => {
     rolls.push(roll);
     sum += roll;
   }
-  let rollsMsg;
+
+  let rollsMsg = '`' + count + 'd' + sides + '`: ';
   if (count == 1) {
-    rollsMsg = 'you rolled a `' + rolls[0] + '`';
+    rollsMsg += 'you rolled a `' + rolls[0] + '`';
   } else {
-    rollsMsg = 'you rolled `' + rolls.join(', ') + '` for a total of `' + sum + '`';
+    rollsMsg += 'you rolled `' + rolls.join(', ') + '` for a total of `' + sum + '`';
   }
+
   sendTo(msg, userId, rollsMsg);
 };
 
@@ -103,6 +110,95 @@ const doDice = (msg, userId, text) => {
   rollDice(msg, userId, count, sides);
 };
 
+const sendUsageInfo = (msg, userId) => {
+  let usageMsg = '\n```';
+  usageMsg += 'PelosiBot v' + PELOSIBOT_VERSION + '\n';
+  usageMsg += '~-~-~-~-~-~-~-~\n';
+  usageMsg += '!pelosi \u2022 sends out a raunchy image\n'
+  usageMsg += '!roll <X>d<Y> \u2022 rolls X dice with Y sides\n'
+  usageMsg += '!pelosibot \u2022 this command\n'
+  if (msg.member.hasPermission('ADMINISTRATOR')) {
+    usageMsg += '\nAdmin commands:\n'
+    usageMsg += '!pelosibot list \u2022 lists current image URLs\n'
+    usageMsg += '!pelosibot add <URL> \u2022 adds an image URL to the list\n'
+    usageMsg += '!pelosibot remove <ID> \u2022 removes an image from the list\n'
+  }
+  usageMsg += '```';
+  sendTo(msg, userId, usageMsg);
+};
+
+const addImageUrl = (msg, userId, url) => {
+  if (PELOSI_ALL.indexOf(url) != -1) {
+    sendTo(msg, userId, 'already in the list.');
+    return;
+  }
+
+  PELOSI_ALL.push(url);
+  sendTo(msg, userId, `added image.`);
+
+  writeData(PELOSI_ALL.join('\n'));
+};
+
+const removeImage = (msg, userId, id) => {
+  if (!(id in PELOSI_ALL)) {
+    sendTo(msg, userId, 'please specify a valid ID.');
+    return;
+  }
+
+  if (id == PELOSI_ALL.length - 1) {
+    PELOSI_ALL.pop();
+  } else {
+    PELOSI_ALL[id] = PELOSI_ALL.pop();
+  }
+
+  sendTo(msg, userId, `removed image ${id}.`);
+
+  writeData(PELOSI_ALL.join('\n'));
+};
+
+const doInfoAndAdmin = (msg, userId, text) => {
+  const groups = PELOSIBOT_EXPR.exec(text);
+  if (!groups) {
+    sendUsageInfo(msg, userId);
+    return;
+  }
+
+  if (!msg.member.hasPermission('ADMINISTRATOR')) {
+    sendTo(msg, userId, 'only an admin can run this command.');
+    return;
+  }
+
+  const cmd = groups[1].split(' ');
+  if (cmd[0] === 'list') {
+    if (!PELOSI_ALL.length) {
+      sendTo(msg, userId, 'no image URLs available!');
+      return;
+    }
+
+    let listMsg = '```';
+    for (let i = 0; i < PELOSI_ALL.length; i++) {
+      listMsg += `[${i}] ${PELOSI_ALL[i]}\n`;
+    }
+    listMsg += '```';
+
+    sendTo(msg, userId, listMsg);
+  } else if (cmd[0] === 'add') {
+    if (!cmd[1]) {
+      sendTo(msg, userId, 'please specify an image URL to add.');
+      return;
+    }
+
+    addImageUrl(msg, userId, cmd[1]);
+  } else if (cmd[0] === 'remove') {
+    if (!cmd[1]) {
+      sendTo(msg, userId, 'please specify an image ID to remove.');
+      return;
+    }
+
+    removeImage(msg, userId, cmd[1]);
+  }
+};
+
 const processMsg = (msg) => {
   const user = msg.author;
 
@@ -121,11 +217,17 @@ const processMsg = (msg) => {
   const dateStr = formatDate(new Date(timestamp));
   console.log(`[${dateStr}] [${authorStr}] ${msg.content}`);
 
-  const text = msg.content.trim().toLowerCase();
+  const text = msg.content.trim();
+  const lower = text.toLowerCase();
 
-  if (text === '!pelosi') {
+  if (PELOSI_ONLY_EXPR.exec(lower)) {
     if (!userId) {
       // theoretically not supposed to happen
+      return;
+    }
+
+    // ignore messages from self
+    if (userId == client.user.id) {
       return;
     }
 
@@ -141,8 +243,10 @@ const processMsg = (msg) => {
     if (index !== null) {
       send(msg, PELOSI_ALL[index]);
     }
-  } else if (text.startsWith('!roll')) {
-    doDice(msg, userId, text);
+  } else if (lower.startsWith('!roll')) {
+    doDice(msg, userId, lower);
+  } else if (lower.startsWith('!pelosibot')) {
+    doInfoAndAdmin(msg, userId, text);
   }
 };
 
@@ -158,30 +262,45 @@ const readFile = (filename, encoding) => {
   }
 };
 
+const readData = () => {
+  const data = readFile(DATA_FILE_PATH);
+  if (!data) {
+    console.error('failed to read data file!');
+    return false;
+  }
+  // filter out empties
+  return data.split(/\s+/).filter((x) => x);
+};
+
+const writeData = (body, encoding) => {
+  if (!encoding) {
+    encoding = 'utf8';
+  }
+  fs.writeFile(DATA_FILE_PATH, body, encoding, (err) => {
+    console.error('failed to write out to data file!');
+  });
+};
+
 // ================================ //
 
 const client = new Discord.Client();
 
 client.on('ready', () => {
-  console.log(`PelosiBot logged in as ${client.user.tag}`);
+  console.log(`PelosiBot logged in as ${client.user.tag} with user ID ${client.user.id}`);
 });
 
 client.on('message', msg => {
   processMsg(msg);
 });
 
-const SECRET = process.env.PELOSI_BOT_SECRET;
 if (!SECRET) {
   console.error('PELOSI_BOT_SECRET not set!');
   process.exit(1);
 }
 
-const data = readFile('/var/www/pelosibot/pelosi.txt');
-if (!data) {
-  process.exit(1);
+let PELOSI_ALL = readData();
+if (!PELOSI_ALL) {
+  PELOSI_ALL = [];
 }
-
-// filter out empties
-let PELOSI_ALL = data.split(/\s+/).filter((x) => x);
 
 client.login(SECRET);
